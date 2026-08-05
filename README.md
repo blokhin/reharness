@@ -171,11 +171,24 @@ flowchart TD
 
 ### Backends (providers)
 
-The agent leaves run on the **Pi** backend; the FSM/compiler are provider-agnostic (a leaf is just "someone runs it").
-The backend is a single adapter in `src/runtime/providers.ts` (argv lowering of the three harness axes + event-stream
-normalization + RPC turn-framing + synthesized-tool rendering), so adding another backend is one Provider, not a
-cross-cutting change. Select with `--provider`, `def.provider`, or `REHARNESS_PROVIDER` (today: `pi`). `--model` /
+The agent leaves run on **Pi** (default), **OpenCode**, or **Hermes**; the FSM/compiler are provider-agnostic (a leaf
+is just "someone runs it"). A backend is a single adapter in `src/runtime/providers.ts` (argv lowering of the three
+harness axes + event-stream normalization + turn-framing + synthesized-tool rendering), so adding another is one
+Provider, not a cross-cutting change. Select with `--provider`, `def.provider`, or `REHARNESS_PROVIDER`. `--model` /
 `def.piModel` choose the model within the backend.
+
+| | `pi` | `opencode` | `hermes` |
+|---|---|---|---|
+| install | `npm i -g @mariozechner/pi-coding-agent` | `npm i -g opencode-ai` | [install script](https://github.com/NousResearch/hermes-agent) |
+| synthesized tools | `--extension` | generated `tool/` dir | **not supported** (warns) |
+| skills | `--skill` | `instructions` | inlined into the prompt |
+| in-session validation | one live process | re-spawn + `--session` | **once, then fails loud** |
+| streamed events | per tool/message | per tool/message | final text only |
+
+The backends differ in capability, so they are not freely interchangeable. **Hermes cannot load a synthesized tool**
+(no path-based tool-loading flag exists in its CLI) and **cannot self-correct** (its `-z` one-shot entry point has no
+reachable session resume), so a pipeline whose leaf depends on an `evolve`-extracted routine or on `validate` fix
+rounds should stay on `pi` or `opencode`. See AGENTS.md for the full table and the authoring implications.
 
 ### Tuning hyperparameters
 

@@ -129,10 +129,40 @@ profile). They are applied at the runtime layer (`RunOptions.overrides`, keyed `
 a `max` override stays a finite integer ≥1, so the termination guarantee holds. The compiler's *own* knobs (fan-out
 width, correction-retry budget, shell timeout, …) live in `src/config.ts`, each overridable via a `REHARNESS_*` env var.
 
-**Backend (provider).** Agent leaves run on the `pi` backend (default and currently the only one). Select via
-`--provider`, `def.provider`, or `REHARNESS_PROVIDER`. The FSM is provider-agnostic; the backend is one adapter in
-`src/runtime/providers.ts` (argv lowering of the three axes + event-stream normalization + RPC turn-framing), so a new
+**Backend (provider).** Agent leaves run on `pi` (default), `opencode`, or `hermes`. Select via `--provider`,
+`def.provider`, or `REHARNESS_PROVIDER`. The FSM is provider-agnostic; a backend is one adapter in
+`src/runtime/providers.ts` (argv lowering of the three axes + event-stream normalization + turn-framing), so a new
 backend is one Provider, not a cross-cutting change. `--model` / `def.piModel` choose the model within the backend.
+
+Backends are **not interchangeable** — a pipeline that depends on a capability, that its backend lacks, degrades, so pick
+with this table in view:
+
+| | `pi` | `opencode` | `hermes` |
+|---|---|---|---|
+| synthesized tools (`extensions`) | ✅ `--extension` | ✅ via a generated `tool/` dir | ❌ **dropped, with a warning** |
+| skills | ✅ `--skill` | ✅ via `instructions` | ✅ inlined into the prompt |
+| in-session validation (`validate`) | ✅ one live process (stdin turns) | ✅ re-spawn + `--session` | ❌ **runs once, then fails loud** |
+| per-tool / per-message events | ✅ | ✅ | ❌ final text only |
+| cost + token accounting | ✅ | ✅ | ✅ (via `--usage-file`) |
+
+Notes that matter when authoring a pipeline:
+- **`hermes` cannot load a synthesized tool.** The released CLI has no path-based tool-loading flag, so `evolve`'s
+  extracted routines are not bound on it — the run warns and continues with the tool absent. A pipeline whose leaf
+  *depends* on an extracted tool should pin `def.provider: "pi"` (or `opencode`).
+- **`hermes` cannot self-correct.** Its scripted entry point is the top-level `-z <prompt>`, which bypasses the chat
+  parser — so session resume is unreachable there, and `chat --continue` keys off the *globally* most recent session,
+  which parallel leaves would steal from each other. A `validate` callback therefore runs **once** after the one-shot
+  and a failure throws rather than looping. Pin `pi` (or `opencode`) for a leaf that relies on fix rounds.
+- **`validate` on `opencode` re-spawns per turn** rather than re-prompting a hot process. Context carries across turns
+  (the session is resumed), but each fix round pays process startup; `pi` is cheaper for loops.
+- **`hermes` skills are inlined, not referenced.** `-s` resolves skill *names* inside Hermes' own skills dir, and
+  registering an external dir means editing the user's global `~/.hermes/config.yaml`. A leaf's skills are absolute
+  paths, so their text is concatenated into the ephemeral system prompt — same end state, no user-config mutation.
+- **`opencode` runs headlessly with `--auto`** (without it, it auto-*rejects* every permission request, so a leaf
+  would silently make no edits). This matches Pi's unattended `--no-session` behavior.
+- No backend takes a system prompt on argv except `pi`: `opencode` gets it through a generated config dir
+  (`OPENCODE_CONFIG_DIR`), `hermes` through `HERMES_EPHEMERAL_SYSTEM_PROMPT`. This is invisible to a pipeline author
+  — the `prompt` axis is unchanged — but it means those backends need a writable temp dir.
 
 ## State Context API
 
